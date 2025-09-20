@@ -6,4 +6,3 @@ aiofiles==23.2.1
 python-telegram-bot==20.7
 telethon==1.28.5
 python-dotenv==1.0.0
-redis==5.0.1
