@@ -6,7 +6,6 @@ import httpx
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 import telegram
 from telegram import InputFile
 import telethon
@@ -14,10 +13,8 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 import logging
 from typing import Optional
-import humanize
 from datetime import datetime, timedelta
-import redis
-import json
+import math
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -35,10 +32,10 @@ app.add_middleware(
 )
 
 # Configuration
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8303908376:AAEL1dL0BjpmpbdYjZ5yQmgb1UJLa_OMbGk")
-CHANNEL_ID = os.getenv("CHANNEL_ID", "-1002995694885")
-API_ID = int(os.getenv("API_ID", "20288994"))
-API_HASH = os.getenv("API_HASH", "d702614912f1ad370a0d18786002adbf")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "your_bot_token_here")
+CHANNEL_ID = os.getenv("CHANNEL_ID", "-1001234567890")
+API_ID = int(os.getenv("API_ID", "12345678"))
+API_HASH = os.getenv("API_HASH", "your_api_hash_here")
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/tmp/uploads")
 MAX_FILE_SIZE = 6 * 1024 * 1024 * 1024  # 6GB
 CHUNK_SIZE = 2000 * 1024 * 1024  # 2GB
@@ -46,7 +43,6 @@ CHUNK_SIZE = 2000 * 1024 * 1024  # 2GB
 # Initialize clients
 bot = telegram.Bot(token=BOT_TOKEN)
 telegram_client = None
-redis_client = None
 
 # File extensions
 VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp'}
@@ -55,19 +51,16 @@ AUDIO_EXTENSIONS = {'.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a', '.wma'}
 # Ensure upload directory exists
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Initialize Redis for health checks and caching
-try:
-    redis_client = redis.Redis(
-        host=os.getenv('REDIS_HOST', 'localhost'),
-        port=int(os.getenv('REDIS_PORT', 6379)),
-        password=os.getenv('REDIS_PASSWORD'),
-        decode_responses=True
-    )
-    redis_client.ping()
-    logger.info("✅ Redis connected successfully")
-except Exception as e:
-    logger.warning(f"❌ Redis not available: {e}")
-    redis_client = None
+def format_file_size(size_bytes):
+    """Format file size in human readable format without external dependencies"""
+    if size_bytes == 0:
+        return "0 Bytes"
+    
+    size_names = ["Bytes", "KB", "MB", "GB", "TB"]
+    i = int(math.floor(math.log(size_bytes, 1024)))
+    p = math.pow(1024, i)
+    s = round(size_bytes / p, 2)
+    return f"{s} {size_names[i]}"
 
 @app.on_event("startup")
 async def startup_event():
@@ -124,10 +117,8 @@ async def health_check():
         "services": {
             "api": "online",
             "telegram_bot": "unknown",
-            "redis": "online" if redis_client else "offline",
             "storage": "online" if os.path.exists(UPLOAD_DIR) else "offline"
         },
-        "uptime": "0",  # Would use time.time() - start_time in real implementation
         "version": "2.0.0"
     }
     
@@ -138,15 +129,6 @@ async def health_check():
     except Exception as e:
         health_status["services"]["telegram_bot"] = f"offline: {str(e)}"
         health_status["status"] = "degraded"
-    
-    # Check Redis
-    if redis_client:
-        try:
-            redis_client.ping()
-            health_status["services"]["redis"] = "online"
-        except Exception:
-            health_status["services"]["redis"] = "offline"
-            health_status["status"] = "degraded"
     
     return health_status
 
@@ -159,19 +141,19 @@ async def home():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Hostio - File Uploader</title>
+        <title>File Uploader</title>
         <style>
-            /* Add your CSS styles here */
             body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
             .upload-container { border: 2px dashed #ccc; padding: 40px; text-align: center; margin: 20px 0; }
             .progress { margin: 20px 0; }
+            .btn { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
         </style>
     </head>
     <body>
-        <h1>Hostio File Uploader</h1>
+        <h1>File Uploader to Telegram</h1>
         <div class="upload-container">
             <input type="file" id="fileInput" multiple>
-            <button onclick="uploadFile()">Upload File</button>
+            <button class="btn" onclick="uploadFile()">Upload File</button>
             <div class="progress" id="progress" style="display: none;">
                 <progress value="0" max="100"></progress>
                 <span id="progressText">0%</span>
@@ -253,7 +235,7 @@ async def upload_file(file: UploadFile = File(...)):
 async def upload_to_telegram(filepath: str, filename: str, filesize: int):
     """Upload file to Telegram channel"""
     try:
-        human_size = humanize.naturalsize(filesize)
+        human_size = format_file_size(filesize)
         caption = f"📁 {filename}\n💾 Size: {human_size}"
         
         # For small files (<2GB)
@@ -293,7 +275,7 @@ async def upload_to_telegram(filepath: str, filename: str, filesize: int):
 
 @app.get("/metrics")
 async def metrics():
-    """Prometheus-style metrics endpoint"""
+    """Metrics endpoint"""
     metrics_data = {
         "uploads_total": 0,
         "uploads_failed": 0,
@@ -323,7 +305,6 @@ async def api_status():
             "file_upload": "active",
             "health_checks": "active"
         },
-        "uptime": "0",  # Would be calculated in real implementation
         "timestamp": datetime.now().isoformat()
     }
 
