@@ -1,0 +1,28 @@
+name: file-uploader
+services:
+  - name: web
+    ports:
+      - port: 3000
+        protocol: http
+    routes:
+      - path: /
+        port: 3000
+    env:
+      - name: PORT
+        value: "3000"
+      - name: NODE_ENV
+        value: production
+    scalings:
+      min: 1
+      max: 1
+    health_checks:
+      http:
+        path: /health
+        port: 3000
+        initial_delay: 30
+        period: 60
+        timeout: 10
+        success_threshold: 1
+        failure_threshold: 3
+    instance:
+      type: nano
